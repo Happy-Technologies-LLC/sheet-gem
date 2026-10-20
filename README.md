@@ -12,6 +12,8 @@ npm run dist:mac   # .dmg   (run on a Mac)
 npm run dist:win   # .exe   (run on Windows)
 ```
 
+The app icon (`build/icon.png`) is rendered from the same glitter and gem code as the UI: `npm run icon` regenerates it.
+
 Installers land in `release/`. Builds are unsigned by default. Add `CSC_LINK`/`CSC_KEY_PASSWORD` (and Apple notarization env vars on macOS) to sign.
 
 ## Layout
