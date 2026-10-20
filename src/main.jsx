@@ -1,0 +1,14 @@
+import React from "react";
+import { createRoot } from "react-dom/client";
+import "@fontsource/mirza/400.css";
+import "@fontsource/mirza/600.css";
+import "@fontsource/mirza/700.css";
+import "@fontsource/lexend-mega/300.css";
+import "@fontsource/lexend-mega/400.css";
+import "@fontsource/lexend-mega/600.css";
+import "@fortawesome/fontawesome-free/css/fontawesome.min.css";
+import "@fortawesome/fontawesome-free/css/solid.min.css";
+import "@fortawesome/fontawesome-free/css/regular.min.css";
+import App from "./App.jsx";
+import "./styles.css";
+createRoot(document.getElementById("root")).render(<App />);

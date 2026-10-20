@@ -1,0 +1,72 @@
+{
+  "name": "sheet-gem",
+  "productName": "Sheet Gem",
+  "version": "1.0.0",
+  "description": "Combine tiled sewing pattern PDFs onto A0 and large-format sheets at true scale",
+  "type": "module",
+  "main": "electron/main.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV=1 electron .\"",
+    "build": "vite build",
+    "start": "vite build && electron .",
+    "dist": "vite build && electron-builder",
+    "dist:mac": "vite build && electron-builder --mac",
+    "dist:win": "vite build && electron-builder --win"
+  },
+  "build": {
+    "appId": "biz.happytech.sheetgem",
+    "productName": "Sheet Gem",
+    "files": [
+      "dist/**",
+      "electron/**",
+      "tiler/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/sharp/**",
+      "node_modules/@img/**",
+      "node_modules/@napi-rs/**"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.graphics-design"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    },
+    "directories": {
+      "output": "release"
+    }
+  },
+  "dependencies": {
+    "@fontsource/lexend-mega": "^5.3.0",
+    "@fontsource/mirza": "^5.3.0",
+    "@fortawesome/fontawesome-free": "^7.3.1",
+    "@napi-rs/canvas": "^1.0.11",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.4.299",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sharp": "^0.35.5",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "electron": "^44.9.1",
+    "electron-builder": "^26.15.3",
+    "vite": "^8.3.4",
+    "wait-on": "^9.5.1"
+  }
+}
