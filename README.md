@@ -16,6 +16,8 @@ The app icon (`build/icon.png`) is rendered from the same glitter and gem code a
 
 Installers land in `release/`. Builds are unsigned by default. Add `CSC_LINK`/`CSC_KEY_PASSWORD` (and Apple notarization env vars on macOS) to sign.
 
+Releases: push a `v*` tag (e.g. `git tag v1.1.0 && git push --tags`). `.github/workflows/release.yml` builds the macOS (Apple Silicon) `.dmg` and the Windows `.exe` installer on their own runners and attaches both to the GitHub release.
+
 ## Layout
 - `electron/main.js` handles the window, file dialogs, IPC, and launching the worker.
 - `electron/worker.js` runs `tile()` in a utility process and streams progress messages.
