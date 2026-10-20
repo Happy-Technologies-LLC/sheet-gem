@@ -1,6 +1,5 @@
 import { createRequire } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import { PDFDocument } from "pdf-lib";
 import { createCanvas } from "@napi-rs/canvas";
@@ -14,7 +13,8 @@ const groups = idx => { const g = []; for (const i of idx) { if (g.length && i -
 const mean = a => a.reduce((s, v) => s + v, 0) / a.length;
 
 const pdfjsDir = path.dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
-const asset = d => pathToFileURL(path.join(pdfjsDir, d) + path.sep).href;
+// pdf.js in Node hands these straight to fs.readFile after appending a filename, so they must be plain paths ending in a separator.
+const asset = d => path.join(pdfjsDir, d) + path.sep;
 
 async function render(page, dpi) {
   const viewport = page.getViewport({ scale: dpi / 72 });
@@ -38,7 +38,7 @@ function borderBox({ data, w, h }) {
 
 async function loadTiles(buf, dpi, pages, log) {
   const task = pdfjs.getDocument({ data: new Uint8Array(buf), standardFontDataUrl: asset("standard_fonts"), cMapUrl: asset("cmaps"),
-    wasmUrl: asset("wasm"), isEvalSupported: false, verbosity: 0 });
+    wasmUrl: asset("wasm"), isEvalSupported: false });
   const doc = await task.promise;
   const idx = pages ?? [...Array(doc.numPages).keys()];
   const found = [];
