@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import Diamond from "./Diamond.jsx";
+import { useSheetZoom } from "./useSheetZoom.js";
 
 const PAPERS = [
   { id: "A0", dims: "841 × 1189 mm" }, { id: "A1", dims: "594 × 841 mm" }, { id: "A2", dims: "420 × 594 mm" },
@@ -63,16 +64,18 @@ export default function App() {
   };
 
   const r = result?.report;
+  const view = useSheetZoom(r?.paperMm ?? null);
   return (
     <div className="app" onDragOver={e => { e.preventDefault(); setDragging(true); }}
          onDragLeave={e => { if (e.currentTarget === e.target) setDragging(false); }} onDrop={onDrop}>
+      <div className="titlebar" aria-hidden="true" />
       <aside className="panel">
         <header className="brand">
           <div className="logo">
             <Diamond />
             <div>
-              <div className="wordmark">Jewels by Juls</div>
-              <div className="tagline"><span>Est. 2026 • Philadelphia</span></div>
+              <div className="wordmark">Sheet Gem</div>
+              <div className="tagline"><span>by Jewels by Juls • Philadelphia</span></div>
             </div>
           </div>
           <h1>Turn a tape-together pattern into one big <em>sheet</em></h1>
@@ -134,7 +137,7 @@ export default function App() {
           {state === "done" && r && (
             <div className="done">
               <p className="summary">
-                {r.pieces} pieces from {r.tiles} pages ({r.grid[0]} rows of {r.grid[1]}) on{" "}
+                {r.pieces} {r.pieces === 1 ? "piece" : "pieces"} from {r.tiles} pages ({r.grid[0]} rows of {r.grid[1]}) on{" "}
                 {r.sheets === 1 ? "one sheet" : `${r.sheets} sheets`}.{r.rotated ? ` ${r.rotated} turned to fit.` : ""}
               </p>
               <button className="primary" onClick={save}><i className="fa-solid fa-download" aria-hidden="true" /> Save PDF</button>
@@ -145,12 +148,13 @@ export default function App() {
         </footer>
       </aside>
 
-      <main className="board"><div className="melamine"><div className={"mat" + (dragging ? " drag" : "")}>
+      <main className="board"><div className="melamine">
+        <div ref={view.matRef} style={view.matStyle} className={"mat" + (dragging ? " drag" : "") + (view.matStyle ? " scaled" : "")}>
         {result ? (
           <div className="sheets">
             {result.previews.map((src, i) => (
               <figure key={i}>
-                <img src={src} alt={`Sheet ${i + 1} preview`} />
+                <img src={src} alt={`Sheet ${i + 1} preview`} style={{ width: view.sheetWidthPx }} onLoad={i === 0 ? view.onSheetLoad : undefined} />
                 <figcaption>Sheet {i + 1} of {result.previews.length}, {r.paperMm[0]} × {r.paperMm[1]} mm</figcaption>
               </figure>
             ))}
@@ -162,7 +166,16 @@ export default function App() {
             {state !== "running" && !dragging && <p>Choose a pattern PDF, pick a paper size, and press Combine pattern.</p>}
           </div>
         )}
-      </div></div></main>
+        </div>
+        {result && (
+          <div className="zoombar" role="toolbar" aria-label="Zoom">
+            {view.scaleLabel && <span className="scale" title="Grid squares are drawn at the sheet's true scale"><i className="fa-regular fa-square" aria-hidden="true" /> = {view.scaleLabel}</span>}
+            <button onClick={view.zoomOut} aria-label="Zoom out"><i className="fa-solid fa-minus" aria-hidden="true" /></button>
+            <button className="pct" onClick={view.fitView} title="Fit to mat">{view.zoom === 1 ? "Fit" : `${Math.round(view.zoom * 100)}%`}</button>
+            <button onClick={view.zoomIn} aria-label="Zoom in"><i className="fa-solid fa-plus" aria-hidden="true" /></button>
+          </div>
+        )}
+      </div></main>
     </div>
   );
 }

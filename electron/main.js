@@ -10,6 +10,9 @@ let win, worker, lastPdf;
 function createWindow() {
   win = new BrowserWindow({
     width: 1280, height: 860, minWidth: 940, minHeight: 620, title: "Sheet Gem | Jewels by Juls", backgroundColor: "#FEF2B8",
+    // Blend the title bar into the app: macOS keeps its traffic lights over the panel, Windows keeps its caption buttons.
+    titleBarStyle: "hidden", trafficLightPosition: { x: 16, y: 14 },
+    ...(process.platform === "darwin" ? {} : { titleBarOverlay: { color: "#FEF2B8", symbolColor: "#565656", height: 34 } }),
     webPreferences: { preload: path.join(dir, "preload.cjs"), contextIsolation: true, sandbox: true },
   });
   if (process.env.VITE_DEV) win.loadURL("http://localhost:5173");

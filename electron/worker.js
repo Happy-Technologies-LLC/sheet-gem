@@ -20,7 +20,7 @@ process.parentPort.on("message", async ({ data }) => {
   try {
     const { tile } = await tiler;
     const { pdf, previews, report } = await tile(fs.readFileSync(data.file), {
-      ...data.opts, previewScale: 6, log: text => send({ type: "log", text }),
+      ...data.opts, previewScale: 3, log: text => send({ type: "log", text }), // 100 dpi previews stay sharp when zoomed in
     });
     fs.writeFileSync(data.out, pdf);
     send({ type: "done", report, pdfPath: data.out, previews: previews.map(p => "data:image/png;base64," + p.toString("base64")) });
