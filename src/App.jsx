@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import Diamond from "./Diamond.jsx";
+import GlitterText from "./GlitterText.jsx";
 import { useSheetZoom } from "./useSheetZoom.js";
 
 const PAPERS = [
@@ -73,9 +74,9 @@ export default function App() {
         <header className="brand">
           <div className="logo">
             <Diamond />
-            <div>
-              <div className="wordmark">Sheet Gem</div>
-              <div className="tagline"><span>by Jewels by Juls • Philadelphia</span></div>
+            <div className="logo-text">
+              <div className="wordmark"><GlitterText text="Sheet Gem" font={'"Dancing Script", cursive'} size={40} /></div>
+              <div className="tagline">Jewels by Juls · Philadelphia</div>
             </div>
           </div>
           <h1>Turn a tape-together pattern into one big <em>sheet</em></h1>

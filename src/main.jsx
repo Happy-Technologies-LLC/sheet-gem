@@ -6,6 +6,7 @@ import "@fontsource/mirza/700.css";
 import "@fontsource/lexend-mega/300.css";
 import "@fontsource/lexend-mega/400.css";
 import "@fontsource/lexend-mega/600.css";
+import "@fontsource/dancing-script/700.css";
 import "@fortawesome/fontawesome-free/css/fontawesome.min.css";
 import "@fortawesome/fontawesome-free/css/solid.min.css";
 import "@fortawesome/fontawesome-free/css/regular.min.css";

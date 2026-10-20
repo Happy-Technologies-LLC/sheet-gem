@@ -38,8 +38,27 @@ export function useSheetZoom(sheetMm) {
       const r = el.getBoundingClientRect();
       setZoom(zoomRef.current * Math.exp(-e.deltaY * 0.01), { x: e.clientX - r.left, y: e.clientY - r.top });
     };
+    // Drag anywhere on the mat to pan, like a design canvas. Two-finger scroll pans natively.
+    let pan = null;
+    const onScrollbar = e => { const r = el.getBoundingClientRect(); return e.clientX - r.left >= el.clientWidth || e.clientY - r.top >= el.clientHeight; };
+    const onDown = e => {
+      if ((e.button !== 0 && e.button !== 1) || onScrollbar(e)) return;
+      pan = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      el.setPointerCapture(e.pointerId); el.classList.add("panning"); e.preventDefault();
+    };
+    const onMove = e => {
+      if (pan?.id !== e.pointerId) return;
+      el.scrollLeft -= e.clientX - pan.x; el.scrollTop -= e.clientY - pan.y; pan.x = e.clientX; pan.y = e.clientY;
+    };
+    const onUp = e => { if (pan?.id === e.pointerId) { pan = null; el.classList.remove("panning"); } };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => { ro.disconnect(); el.removeEventListener("wheel", onWheel); };
+    el.addEventListener("pointerdown", onDown); el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp); el.addEventListener("pointercancel", onUp);
+    return () => {
+      ro.disconnect(); el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("pointerdown", onDown); el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp); el.removeEventListener("pointercancel", onUp);
+    };
   }, []);
 
   // A new layout starts at Fit.

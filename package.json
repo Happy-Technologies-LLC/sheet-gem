@@ -49,6 +49,7 @@
     }
   },
   "dependencies": {
+    "@fontsource/dancing-script": "^5.3.0",
     "@fontsource/lexend-mega": "^5.3.0",
     "@fontsource/mirza": "^5.3.0",
     "@fortawesome/fontawesome-free": "^7.3.1",
