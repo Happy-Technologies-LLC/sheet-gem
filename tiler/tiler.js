@@ -104,9 +104,9 @@ function bridge(data, w, h, seams, hw) {
     }
   }
 }
-function removeSeams(cv, cols, W, H, lw) {
+function removeSeams(cv, cols, W, H, lw, dpi) {
   const { w, h, rows } = cv; let data = cv.data.slice(); const hw = (lw >> 1) + 2;
-  whitenPaper(data, w, h);
+  whitenPaper(data, w, h, dpi);
   for (let i = 0; i <= cols; i++) { const x = i * W; for (let y = 0; y < h; y++) for (let xx = Math.max(x - hw, 0); xx <= Math.min(x + hw, w - 1); xx++) data[y * w + xx] = 255; }
   for (let i = 0; i <= rows; i++) { const y = i * H; for (let yy = Math.max(y - hw, 0); yy <= Math.min(y + hw, h - 1); yy++) data.fill(255, yy * w, yy * w + w); }
   bridge(data, w, h, [...Array(rows - 1)].map((_, i) => (i + 1) * H), hw);
@@ -117,18 +117,27 @@ function removeSeams(cv, cols, W, H, lw) {
 // Anything lighter than this is paper. Hairlines (0.25 pt is ~1 px at 300 dpi) anti-alias to light greys, so the cut-off
 // sits close to white; a lower one erases thin lines and leaves gaps in piece outlines.
 const PAPER = 245;
-// Designers print page furniture (big watermark page numbers, corner circles with matching letters) in pale grey.
-// Pale pixels are dropped unless they touch real ink: that keeps the anti-aliased edges of hairlines and removes the
-// pale shapes. In place is safe: only pixels >= PALE change, and only to white, so the dark-neighbour test is unaffected.
+// Designers print page furniture (big watermark page numbers) as broad pale-grey shapes. Only pale pixels that are
+// part of a broad pale region (at least 1 mm across both ways) and don't touch real ink are dropped. Thin pale strokes,
+// i.e. genuinely faint pattern lines and the anti-aliased edges of hairlines, are kept. Pale thin furniture such as
+// corner circles therefore stays as a faint line.
 const PALE = 200, DARK = 160;
-export function whitenPaper(data, w, h) {
+export function whitenPaper(data, w, h, dpi) {
+  const T = Math.round(dpi / 25.4), m = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const i = y * w + x, v = data[i]; if (v < PALE) continue;
     if (v > PAPER) { data[i] = 255; continue; }
     let ink = false;
     for (let dy = -1; dy <= 1 && !ink; dy++) { const yy = y + dy; if (yy < 0 || yy >= h) continue;
       for (let dx = -1; dx <= 1; dx++) { const xx = x + dx; if (xx >= 0 && xx < w && data[yy * w + xx] < DARK) { ink = true; break; } } }
-    if (!ink) data[i] = 255;
+    if (!ink) m[i] = 1;
+  }
+  // keep only runs at least T long horizontally, then of those, at least T long vertically
+  for (let y = 0; y < h; y++) { const o = y * w; for (let x = 0; x < w;) {
+    if (!m[o + x]) { x++; continue; } let e = x; while (e < w && m[o + e]) e++; if (e - x < T) m.fill(0, o + x, o + e); x = e; } }
+  for (let x = 0; x < w; x++) for (let y = 0; y < h;) {
+    if (!m[y * w + x]) { y++; continue; } let e = y; while (e < h && m[e * w + x]) e++;
+    for (let k = y; k < e; k++) if (e - y >= T) data[k * w + x] = 255; y = e;
   }
 }
 
@@ -322,8 +331,8 @@ export async function tile(buf, opts = {}) {
   log(`grid ${cv.rows}x${cols}, assembled ${(cv.w / dpi * 25.4).toFixed(0)}x${(cv.h / dpi * 25.4).toFixed(0)}mm`);
   log(keepSeams ? "Cleaning page numbers" : "Removing tile seams");
   let clean;
-  if (keepSeams) { clean = { data: cv.data, w: cv.w, h: cv.h }; whitenPaper(clean.data, clean.w, clean.h); }
-  else clean = removeSeams(cv, cols, W, H, lw);
+  if (keepSeams) { clean = { data: cv.data, w: cv.w, h: cv.h }; whitenPaper(clean.data, clean.w, clean.h, dpi); }
+  else clean = removeSeams(cv, cols, W, H, lw, dpi);
   let marks = 0;
   if (!keepSeams && pageMarks) { log("Removing page letters and numbers"); ({ clean, removed: marks } = removePageMarks(clean, cols, cv.rows, W, H, dpi)); }
   log("Finding pattern pieces");

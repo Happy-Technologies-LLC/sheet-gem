@@ -57,14 +57,19 @@ test("page-number removal leaves marks that are cut by a page edge", () => {
   assert.equal(all(clean), before);
 });
 
-test("paper clean-up drops pale watermarks but keeps the faint edges of hairlines", () => {
+test("paper clean-up drops pale watermarks but keeps hairlines and genuinely faint lines", () => {
   const img = canvas(ctx => {
     ctx.fillStyle = "#e2e2e4"; ctx.font = `${mm(60)}px sans-serif`; ctx.fillText("10", mm(20), mm(90)); // watermark page number
     ctx.strokeStyle = "#000"; ctx.lineWidth = mm(0.09); ctx.beginPath(); ctx.moveTo(mm(5), mm(150)); ctx.lineTo(mm(195), mm(160)); ctx.stroke();
+    ctx.strokeStyle = "#ddd"; ctx.lineWidth = mm(0.2); ctx.beginPath(); ctx.moveTo(mm(5), mm(180)); ctx.lineTo(mm(195), mm(185)); ctx.stroke();
+    ctx.setLineDash([mm(3), mm(2)]); ctx.beginPath(); ctx.arc(mm(100), mm(120), mm(8), 0, 2 * Math.PI); ctx.stroke(); // faint dashed curve
   });
-  const line = inkIn(img, 0, mm(140), img.w, mm(170), 246), clean = { ...img, data: img.data.slice() };
-  assert.ok(inkIn(img, 0, 0, img.w, mm(100), 246) > 1000);
-  whitenPaper(clean.data, clean.w, clean.h);
-  assert.equal(inkIn(clean, 0, 0, clean.w, mm(100), 246), 0);
-  assert.ok(inkIn(clean, 0, mm(140), clean.w, mm(170), 246) >= line * 0.95);
+  const clean = { ...img, data: img.data.slice() }, faint = (im, y0, y1) => inkIn(im, 0, y0, im.w, y1, 246);
+  const mark = faint(img, 0, mm(100));
+  assert.ok(mark > 1000);
+  whitenPaper(clean.data, clean.w, clean.h, DPI);
+  assert.ok(faint(clean, 0, mm(100)) < mark * 0.005); // only stray anti-aliased tips of the glyphs survive
+  assert.ok(faint(clean, mm(140), mm(170)) >= faint(img, mm(140), mm(170)) * 0.95); // black hairline with pale edges
+  assert.equal(faint(clean, mm(175), mm(190)), faint(img, mm(175), mm(190)));      // standalone light-grey hairline
+  assert.equal(faint(clean, mm(108), mm(130)), faint(img, mm(108), mm(130)));      // faint dashed curve
 });
