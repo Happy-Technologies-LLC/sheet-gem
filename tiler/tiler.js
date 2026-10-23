@@ -121,8 +121,10 @@ const PAPER = 245;
 // Print-at-home patterns put matching letters/numbers beside each tile seam, one copy on each side ("B | B"), and at
 // tile corners four copies. Once the seams are gone they are clutter, so remove small compact marks that have a
 // same-sized twin mirrored across an interior seam. Works on vertical seams; horizontal seams go through transpose().
+// Sizes are judged on the ink itself (the grown box minus the growth), so dashes and dots of size lines, which are
+// at most ~0.35 mm thick, never qualify. Known gap: genuine pattern marks drawn mirror-image across a seam would go too.
 function removeMatchMarks(data, w, h, seams, dpi) {
-  const mm = v => Math.round(v / 25.4 * dpi), D = mm(16), tol = mm(3), lo = mm(1.2), hi = mm(12), r = mm(0.5);
+  const mm = v => Math.round(v / 25.4 * dpi), D = mm(16), tol = mm(3), lo = mm(0.8), hi = mm(12), r = mm(0.5);
   let removed = 0;
   for (const sx of seams) {
     const x0 = Math.max(sx - D, 0), x1 = Math.min(sx + D, w), bw = x1 - x0, band = new Uint8Array(bw * h);
@@ -130,7 +132,7 @@ function removeMatchMarks(data, w, h, seams, dpi) {
     const grown = dilate(band, bw, h, r), { lab, boxes } = label(grown, bw, h);
     const marks = [];
     for (let id = 1; id < boxes.length; id++) {
-      const b = boxes[id], bwid = b.x1 - b.x0, bht = b.y1 - b.y0;
+      const b = boxes[id], bwid = b.x1 - b.x0 - 2 * r, bht = b.y1 - b.y0 - 2 * r;
       if (bwid < lo || bht < lo || bwid > hi || bht > hi) continue;           // dots/dashes are thinner, labels and pieces bigger
       if (b.x0 === 0 || b.x1 === bw || bwid > 3 * bht || bht > 3 * bwid) continue; // must sit inside the band and be compact
       const cx = x0 + (b.x0 + b.x1) / 2 - sx;
@@ -147,25 +149,28 @@ function removeMatchMarks(data, w, h, seams, dpi) {
   }
   return removed;
 }
-function removeAllMatchMarks(clean, cols, rows, W, H, dpi) {
+export function removeAllMatchMarks(clean, cols, rows, W, H, dpi, pageNumbers) {
   const { w, h } = clean; let data = clean.data;
   let n = removeMatchMarks(data, w, h, [...Array(cols - 1)].map((_, i) => (i + 1) * W), dpi);
   const t = transpose(data, w, h); n += removeMatchMarks(t, h, w, [...Array(rows - 1)].map((_, i) => (i + 1) * H), dpi);
   data = transpose(t, h, w);
-  return { clean: { data, w, h }, removed: n + removeTileFurniture(data, w, h, cols, rows, W, H, dpi) };
+  if (pageNumbers) n += removeTileFurniture(data, w, h, cols, rows, W, H, dpi);
+  return { clean: { data, w, h }, removed: n };
 }
 
-// Page numbers and similar page furniture sit at the same spot on every page. Remove small marks found at the same
-// tile-relative position (and height) on at least half the pages. Pattern content never repeats like that.
+// Opt-in: page numbers sit at the same spot on every page, so remove small marks found at the same tile-relative
+// position and height on at least half the pages. This can also catch genuine pattern marks that happen to repeat
+// at the page pitch (quilting guides, button or drill marks), which is why it is off unless the user asks for it.
 function removeTileFurniture(data, w, h, cols, rows, W, H, dpi) {
-  const mm = v => Math.round(v / 25.4 * dpi), tol = mm(2.5), lo = mm(1), hi = mm(15), r = mm(0.5), tiles = [];
+  const mm = v => Math.round(v / 25.4 * dpi), tol = mm(2.5), lo = mm(0.8), hi = mm(15), r = mm(0.5), tiles = [];
   for (let tr = 0; tr < rows; tr++) for (let tc = 0; tc < cols; tc++) {
     const x0 = tc * W, y0 = tr * H, tw = Math.min(W, w - x0), th = Math.min(H, h - y0); if (tw <= 0 || th <= 0) continue;
     const m = new Uint8Array(tw * th);
     for (let y = 0; y < th; y++) { const o = (y0 + y) * w + x0; for (let x = 0; x < tw; x++) m[y * tw + x] = data[o + x] < PAPER ? 1 : 0; }
     const { lab, boxes } = label(dilate(m, tw, th, r), tw, th), marks = [];
     for (let id = 1; id < boxes.length; id++) {
-      const b = boxes[id], bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+      const b = boxes[id], bw = b.x1 - b.x0 - 2 * r, bh = b.y1 - b.y0 - 2 * r;
+      if (b.x0 === 0 || b.y0 === 0 || b.x1 === tw || b.y1 === th) continue;    // cut by the page edge: part of something larger
       if (bw < lo || bh < lo || bw > hi || bh > hi || bw > 5 * bh || bh > 5 * bw) continue;
       marks.push({ id, cx: (b.x0 + b.x1) / 2, cy: (b.y0 + b.y1) / 2, bh, hits: 0 });
     }
@@ -258,7 +263,8 @@ export function paperPx(spec, dpi) {
 }
 
 export async function tile(buf, opts = {}) {
-  const { paper = "A0", dpi = 300, previewScale = 10, margin = 10, gap = 10, keepSeams = false, rotate = true, boldLines: bold = true, log = () => {} } = opts;
+  const { paper = "A0", dpi = 300, previewScale = 10, margin = 10, gap = 10, keepSeams = false, rotate = true, boldLines: bold = true,
+    removePageNumbers = false, log = () => {} } = opts;
   const mm = v => Math.round(v / 25.4 * dpi);
   const { tiles, W, H, lw, skipped } = await loadTiles(buf, dpi, opts.pages, log);
   const n = tiles.length;
@@ -279,7 +285,7 @@ export async function tile(buf, opts = {}) {
   if (keepSeams) { clean = { data: cv.data, w: cv.w, h: cv.h }; for (let i = 0; i < clean.data.length; i++) if (clean.data[i] > PAPER) clean.data[i] = 255; }
   else clean = removeSeams(cv, cols, W, H, lw);
   let marks = 0;
-  if (!keepSeams) { log("Removing page-matching marks"); ({ clean, removed: marks } = removeAllMatchMarks(clean, cols, cv.rows, W, H, dpi)); }
+  if (!keepSeams) { log("Removing page-matching marks"); ({ clean, removed: marks } = removeAllMatchMarks(clean, cols, cv.rows, W, H, dpi, removePageNumbers)); }
   log("Finding pattern pieces");
   const { parts, f, sw, sh } = segment(clean, dpi);
   const imgs = parts.map(p => ({ kind: p.kind, ...extract(clean, p.mask, f, sw, sh) }));

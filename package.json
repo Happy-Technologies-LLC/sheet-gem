@@ -11,6 +11,7 @@
     "build": "vite build",
     "start": "vite build && electron .",
     "icon": "electron scripts/render-icon.mjs",
+    "test": "node --test \"test/*.test.mjs\"",
     "dist": "vite build && electron-builder",
     "dist:mac": "vite build && electron-builder --mac",
     "dist:win": "vite build && electron-builder --win"
