@@ -20,6 +20,7 @@ export default function App() {
   const [gap, setGap] = useState(10);
   const [rotate, setRotate] = useState(true);
   const [keepSeams, setKeepSeams] = useState(false);
+  const [boldLines, setBoldLines] = useState(true);
   const [state, setState] = useState("idle"); // idle | running | done | error
   const [step, setStep] = useState("");
   const [result, setResult] = useState(null);
@@ -40,7 +41,7 @@ export default function App() {
   async function run() {
     setState("running"); setStep("Starting"); setResult(null); setSaved(null); setError("");
     try {
-      const r = await api.run(file.path, { paper: paperSpec, margin: +margin, gap: +gap, rotate, keepSeams });
+      const r = await api.run(file.path, { paper: paperSpec, margin: +margin, gap: +gap, rotate, keepSeams, boldLines });
       setResult(r); setState("done");
     } catch (e) {
       const msg = String(e.message || e).replace(/^Error invoking remote method 'run': (Error: )?/, "");
@@ -122,6 +123,7 @@ export default function App() {
           </div>
           <Toggle label="Turn pieces to save paper" checked={rotate} onChange={setRotate} />
           <Toggle label="Keep the page grid lines" checked={keepSeams} onChange={setKeepSeams} />
+          <Toggle label="Darken thin lines for printing" checked={boldLines} onChange={setBoldLines} />
         </section>
 
         <footer className="actions">
@@ -140,6 +142,7 @@ export default function App() {
               <p className="summary">
                 {r.pieces} {r.pieces === 1 ? "piece" : "pieces"} from {r.tiles} pages ({r.grid[0]} rows of {r.grid[1]}) on{" "}
                 {r.sheets === 1 ? "one sheet" : `${r.sheets} sheets`}.{r.rotated ? ` ${r.rotated} turned to fit.` : ""}
+                {r.matchMarks ? ` Removed ${r.matchMarks} page-matching ${r.matchMarks === 1 ? "mark" : "marks"}.` : ""}
               </p>
               <button className="primary" onClick={save}><i className="fa-solid fa-download" aria-hidden="true" /> Save PDF</button>
               {saved && <p className="saved"><i className="fa-solid fa-circle-check" aria-hidden="true" /> Saved. <button className="link" onClick={() => api.reveal(saved)}>Show in folder</button></p>}

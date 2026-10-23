@@ -23,7 +23,9 @@ async function render(page, dpi) {
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
   await page.render({ canvas, canvasContext: ctx, viewport }).promise;
   const rgba = ctx.getImageData(0, 0, w, h).data, data = new Uint8Array(w * h);
-  for (let i = 0, j = 0; i < data.length; i++, j += 4) data[i] = (rgba[j] * 77 + rgba[j + 1] * 150 + rgba[j + 2] * 29) >> 8;
+  // Ink darkness = darkest channel, so pale coloured size lines (yellow, pink, cyan) come through as dark lines instead of
+  // turning near-white the way plain luminance makes them.
+  for (let i = 0, j = 0; i < data.length; i++, j += 4) data[i] = Math.min(rgba[j], rgba[j + 1], rgba[j + 2]);
   page.cleanup();
   return { data, w, h };
 }
@@ -104,7 +106,7 @@ function bridge(data, w, h, seams, hw) {
 }
 function removeSeams(cv, cols, W, H, lw) {
   const { w, h, rows } = cv; let data = cv.data.slice(); const hw = (lw >> 1) + 2;
-  for (let i = 0; i < data.length; i++) if (data[i] > 200) data[i] = 255;
+  for (let i = 0; i < data.length; i++) if (data[i] > PAPER) data[i] = 255;
   for (let i = 0; i <= cols; i++) { const x = i * W; for (let y = 0; y < h; y++) for (let xx = Math.max(x - hw, 0); xx <= Math.min(x + hw, w - 1); xx++) data[y * w + xx] = 255; }
   for (let i = 0; i <= rows; i++) { const y = i * H; for (let yy = Math.max(y - hw, 0); yy <= Math.min(y + hw, h - 1); yy++) data.fill(255, yy * w, yy * w + w); }
   bridge(data, w, h, [...Array(rows - 1)].map((_, i) => (i + 1) * H), hw);
@@ -112,12 +114,94 @@ function removeSeams(cv, cols, W, H, lw) {
   return { data: transpose(t, h, w), w, h };
 }
 
+// Anything lighter than this is paper. Hairlines (0.25 pt is ~1 px at 300 dpi) anti-alias to light greys, so the cut-off
+// sits close to white; a lower one erases thin lines and leaves gaps in piece outlines.
+const PAPER = 245;
+
+// Print-at-home patterns put matching letters/numbers beside each tile seam, one copy on each side ("B | B"), and at
+// tile corners four copies. Once the seams are gone they are clutter, so remove small compact marks that have a
+// same-sized twin mirrored across an interior seam. Works on vertical seams; horizontal seams go through transpose().
+function removeMatchMarks(data, w, h, seams, dpi) {
+  const mm = v => Math.round(v / 25.4 * dpi), D = mm(16), tol = mm(3), lo = mm(1.2), hi = mm(12), r = mm(0.5);
+  let removed = 0;
+  for (const sx of seams) {
+    const x0 = Math.max(sx - D, 0), x1 = Math.min(sx + D, w), bw = x1 - x0, band = new Uint8Array(bw * h);
+    for (let y = 0; y < h; y++) { const o = y * w; for (let x = 0; x < bw; x++) band[y * bw + x] = data[o + x0 + x] < PAPER ? 1 : 0; }
+    const grown = dilate(band, bw, h, r), { lab, boxes } = label(grown, bw, h);
+    const marks = [];
+    for (let id = 1; id < boxes.length; id++) {
+      const b = boxes[id], bwid = b.x1 - b.x0, bht = b.y1 - b.y0;
+      if (bwid < lo || bht < lo || bwid > hi || bht > hi) continue;           // dots/dashes are thinner, labels and pieces bigger
+      if (b.x0 === 0 || b.x1 === bw || bwid > 3 * bht || bht > 3 * bwid) continue; // must sit inside the band and be compact
+      const cx = x0 + (b.x0 + b.x1) / 2 - sx;
+      if (Math.abs(cx) < mm(0.5)) continue;                                   // straddles the seam: no twin to compare
+      marks.push({ id, cx, cy: (b.y0 + b.y1) / 2, bwid, bht, hit: false });
+    }
+    const like = (a, b) => Math.abs(a - b) <= Math.max(a, b) * 0.3 + 2;
+    for (const a of marks) for (const b of marks) {
+      if (a === b || Math.sign(a.cx) === Math.sign(b.cx)) continue;
+      if (Math.abs(a.cx + b.cx) <= tol && Math.abs(a.cy - b.cy) <= tol && like(a.bwid, b.bwid) && like(a.bht, b.bht)) a.hit = b.hit = true;
+    }
+    const kill = new Set(marks.filter(m => m.hit).map(m => m.id)); removed += kill.size;
+    if (kill.size) for (let y = 0; y < h; y++) for (let x = 0; x < bw; x++) if (kill.has(lab[y * bw + x])) data[y * w + x0 + x] = 255;
+  }
+  return removed;
+}
+function removeAllMatchMarks(clean, cols, rows, W, H, dpi) {
+  const { w, h } = clean; let data = clean.data;
+  let n = removeMatchMarks(data, w, h, [...Array(cols - 1)].map((_, i) => (i + 1) * W), dpi);
+  const t = transpose(data, w, h); n += removeMatchMarks(t, h, w, [...Array(rows - 1)].map((_, i) => (i + 1) * H), dpi);
+  data = transpose(t, h, w);
+  return { clean: { data, w, h }, removed: n + removeTileFurniture(data, w, h, cols, rows, W, H, dpi) };
+}
+
+// Page numbers and similar page furniture sit at the same spot on every page. Remove small marks found at the same
+// tile-relative position (and height) on at least half the pages. Pattern content never repeats like that.
+function removeTileFurniture(data, w, h, cols, rows, W, H, dpi) {
+  const mm = v => Math.round(v / 25.4 * dpi), tol = mm(2.5), lo = mm(1), hi = mm(15), r = mm(0.5), tiles = [];
+  for (let tr = 0; tr < rows; tr++) for (let tc = 0; tc < cols; tc++) {
+    const x0 = tc * W, y0 = tr * H, tw = Math.min(W, w - x0), th = Math.min(H, h - y0); if (tw <= 0 || th <= 0) continue;
+    const m = new Uint8Array(tw * th);
+    for (let y = 0; y < th; y++) { const o = (y0 + y) * w + x0; for (let x = 0; x < tw; x++) m[y * tw + x] = data[o + x] < PAPER ? 1 : 0; }
+    const { lab, boxes } = label(dilate(m, tw, th, r), tw, th), marks = [];
+    for (let id = 1; id < boxes.length; id++) {
+      const b = boxes[id], bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+      if (bw < lo || bh < lo || bw > hi || bh > hi || bw > 5 * bh || bh > 5 * bw) continue;
+      marks.push({ id, cx: (b.x0 + b.x1) / 2, cy: (b.y0 + b.y1) / 2, bh, hits: 0 });
+    }
+    tiles.push({ x0, y0, tw, th, lab, marks });
+  }
+  if (tiles.length < 3) return 0;
+  const need = Math.max(3, Math.ceil(tiles.length / 2));
+  for (const t of tiles) for (const a of t.marks) for (const u of tiles) {
+    if (u.marks.some(b => Math.abs(a.cx - b.cx) <= tol && Math.abs(a.cy - b.cy) <= tol && Math.abs(a.bh - b.bh) <= Math.max(a.bh, b.bh) * 0.3 + 2)) a.hits++;
+  }
+  let removed = 0;
+  for (const t of tiles) {
+    const kill = new Set(t.marks.filter(a => a.hits >= need).map(a => a.id)); removed += kill.size; if (!kill.size) continue;
+    for (let y = 0; y < t.th; y++) for (let x = 0; x < t.tw; x++) if (kill.has(t.lab[y * t.tw + x])) data[(t.y0 + y) * w + t.x0 + x] = 255;
+  }
+  return removed;
+}
+
+// Copy-shop plotters print 1-pixel hairlines faint and broken. Darken anti-aliased greys and thicken every line by one
+// pixel (0.085 mm at 300 dpi: far below cutting accuracy) so dashed size lines stay readable.
+function boldLines(data, w, h) {
+  const lut = new Uint8Array(256); for (let v = 0; v < 256; v++) lut[v] = v > PAPER ? 255 : Math.round(255 * (v / 255) ** 2.2);
+  for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) {
+    const i = y * w + x; let v = data[i];
+    if (x > 0 && data[i - 1] < v) v = data[i - 1];
+    if (y > 0) { if (data[i - w] < v) v = data[i - w]; if (x > 0 && data[i - w - 1] < v) v = data[i - w - 1]; }
+    data[i] = lut[v];
+  }
+}
+
 function segment(clean, dpi) {
   const f = 4, s = dpi / f, sw = Math.floor(clean.w / f), sh = Math.floor(clean.h / f);
   let sm = new Uint8Array(sw * sh);
-  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) { let sum = 0;
-    for (let dy = 0; dy < f; dy++) { const o = (y * f + dy) * clean.w + x * f; for (let dx = 0; dx < f; dx++) sum += clean.data[o + dx]; }
-    sm[y * sw + x] = sum / (f * f) < 200 ? 1 : 0; }
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    let min = 255; for (let dy = 0; dy < f; dy++) { const o = (y * f + dy) * clean.w + x * f; for (let dx = 0; dx < f; dx++) if (clean.data[o + dx] < min) min = clean.data[o + dx]; }
+    sm[y * sw + x] = min < 200 ? 1 : 0; } // any ink in the block counts: averaging erased hairlines and split pieces apart
   sm = dilate(sm, sw, sh, 2);
   const { lab, n, boxes } = label(sm, sw, sh);
   const area = b => (b.y1 - b.y0) * (b.x1 - b.x0);
@@ -174,7 +258,7 @@ export function paperPx(spec, dpi) {
 }
 
 export async function tile(buf, opts = {}) {
-  const { paper = "A0", dpi = 300, previewScale = 10, margin = 10, gap = 10, keepSeams = false, rotate = true, log = () => {} } = opts;
+  const { paper = "A0", dpi = 300, previewScale = 10, margin = 10, gap = 10, keepSeams = false, rotate = true, boldLines: bold = true, log = () => {} } = opts;
   const mm = v => Math.round(v / 25.4 * dpi);
   const { tiles, W, H, lw, skipped } = await loadTiles(buf, dpi, opts.pages, log);
   const n = tiles.length;
@@ -192,8 +276,10 @@ export async function tile(buf, opts = {}) {
   log(`grid ${cv.rows}x${cols}, assembled ${(cv.w / dpi * 25.4).toFixed(0)}x${(cv.h / dpi * 25.4).toFixed(0)}mm`);
   log(keepSeams ? "Cleaning page numbers" : "Removing tile seams");
   let clean;
-  if (keepSeams) { clean = { data: cv.data, w: cv.w, h: cv.h }; for (let i = 0; i < clean.data.length; i++) if (clean.data[i] > 200) clean.data[i] = 255; }
+  if (keepSeams) { clean = { data: cv.data, w: cv.w, h: cv.h }; for (let i = 0; i < clean.data.length; i++) if (clean.data[i] > PAPER) clean.data[i] = 255; }
   else clean = removeSeams(cv, cols, W, H, lw);
+  let marks = 0;
+  if (!keepSeams) { log("Removing page-matching marks"); ({ clean, removed: marks } = removeAllMatchMarks(clean, cols, cv.rows, W, H, dpi)); }
   log("Finding pattern pieces");
   const { parts, f, sw, sh } = segment(clean, dpi);
   const imgs = parts.map(p => ({ kind: p.kind, ...extract(clean, p.mask, f, sw, sh) }));
@@ -209,6 +295,7 @@ export async function tile(buf, opts = {}) {
     S.used = Math.max(S.used, Y + img.h);
   });
   if (roll) for (const S of sheets) { S.h = Math.min(S.used + m + mm(8), SH); S.data = S.data.subarray(0, S.w * S.h); }
+  if (bold) for (const S of sheets) boldLines(S.data, S.w, S.h);
   log("Writing PDF");
   const out = await PDFDocument.create(); const previews = [];
   for (const [si, S] of sheets.entries()) {
@@ -223,6 +310,6 @@ export async function tile(buf, opts = {}) {
   const pdf = await out.save();
   const report = { sheets: count, paperMm: [Math.round(SW / dpi * 25.4), Math.round(sheets[0].h / dpi * 25.4)], grid: [cv.rows, cols], tiles: n,
     skippedPages: skipped.map(i => i + 1), pieces: imgs.filter(i => i.kind === "piece").length, infoBlocks: imgs.filter(i => i.kind === "info").length,
-    rotated: place.filter(p => p.r).length };
+    rotated: place.filter(p => p.r).length, matchMarks: marks };
   return { pdf, previews, report };
 }
