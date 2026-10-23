@@ -106,7 +106,7 @@ function bridge(data, w, h, seams, hw) {
 }
 function removeSeams(cv, cols, W, H, lw) {
   const { w, h, rows } = cv; let data = cv.data.slice(); const hw = (lw >> 1) + 2;
-  for (let i = 0; i < data.length; i++) if (data[i] > PAPER) data[i] = 255;
+  whitenPaper(data, w, h);
   for (let i = 0; i <= cols; i++) { const x = i * W; for (let y = 0; y < h; y++) for (let xx = Math.max(x - hw, 0); xx <= Math.min(x + hw, w - 1); xx++) data[y * w + xx] = 255; }
   for (let i = 0; i <= rows; i++) { const y = i * H; for (let yy = Math.max(y - hw, 0); yy <= Math.min(y + hw, h - 1); yy++) data.fill(255, yy * w, yy * w + w); }
   bridge(data, w, h, [...Array(rows - 1)].map((_, i) => (i + 1) * H), hw);
@@ -117,50 +117,70 @@ function removeSeams(cv, cols, W, H, lw) {
 // Anything lighter than this is paper. Hairlines (0.25 pt is ~1 px at 300 dpi) anti-alias to light greys, so the cut-off
 // sits close to white; a lower one erases thin lines and leaves gaps in piece outlines.
 const PAPER = 245;
+// Designers print page furniture (big watermark page numbers, corner circles with matching letters) in pale grey.
+// Pale pixels are dropped unless they touch real ink: that keeps the anti-aliased edges of hairlines and removes the
+// pale shapes. In place is safe: only pixels >= PALE change, and only to white, so the dark-neighbour test is unaffected.
+const PALE = 200, DARK = 160;
+export function whitenPaper(data, w, h) {
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, v = data[i]; if (v < PALE) continue;
+    if (v > PAPER) { data[i] = 255; continue; }
+    let ink = false;
+    for (let dy = -1; dy <= 1 && !ink; dy++) { const yy = y + dy; if (yy < 0 || yy >= h) continue;
+      for (let dx = -1; dx <= 1; dx++) { const xx = x + dx; if (xx >= 0 && xx < w && data[yy * w + xx] < DARK) { ink = true; break; } } }
+    if (!ink) data[i] = 255;
+  }
+}
 
-// Print-at-home patterns put matching letters/numbers beside each tile seam, one copy on each side ("B | B"), and at
-// tile corners four copies. Once the seams are gone they are clutter, so remove small compact marks that have a
-// same-sized twin mirrored across an interior seam. Works on vertical seams; horizontal seams go through transpose().
-// Sizes are judged on the ink itself (the grown box minus the growth), so dashes and dots of size lines, which are
-// at most ~0.35 mm thick, never qualify. Known gap: genuine pattern marks drawn mirror-image across a seam would go too.
-function removeMatchMarks(data, w, h, seams, dpi) {
+// Opt-in. Print-at-home patterns put matching letters beside each tile corner, one copy in each of the four pages
+// ("B B / B B"). Remove small letter-shaped marks that sit within 16 mm of an interior tile corner and have a same-sized
+// twin mirrored across the seam. Works on vertical seams; horizontal seams go through transpose(). Sizes are judged on
+// the ink itself (the grown box minus the growth). Dashes of size lines also come in mirrored pairs, so pairs with a
+// third look-alike one step further along the same direction (a dashed line) are kept, and only corner areas qualify:
+// on the vest, unrestricted pairing along the whole seam erased dashes far from any corner.
+// Known gaps: thin glyphs ("I", "1") and letters touching a line are skipped; markers at edge midpoints are not handled.
+function removeMatchMarks(data, w, h, seams, cross, dpi) {
   const mm = v => Math.round(v / 25.4 * dpi), D = mm(16), tol = mm(3), lo = mm(0.8), hi = mm(12), r = mm(0.5);
+  const atCorner = y => cross.some(cy => Math.abs(y - cy) <= D);
   let removed = 0;
   for (const sx of seams) {
-    const x0 = Math.max(sx - D, 0), x1 = Math.min(sx + D, w), bw = x1 - x0, band = new Uint8Array(bw * h);
+    const x0 = Math.max(sx - 3 * D, 0), x1 = Math.min(sx + 3 * D, w), bw = x1 - x0, band = new Uint8Array(bw * h);
     for (let y = 0; y < h; y++) { const o = y * w; for (let x = 0; x < bw; x++) band[y * bw + x] = data[o + x0 + x] < PAPER ? 1 : 0; }
     const grown = dilate(band, bw, h, r), { lab, boxes } = label(grown, bw, h);
     const marks = [];
     for (let id = 1; id < boxes.length; id++) {
       const b = boxes[id], bwid = b.x1 - b.x0 - 2 * r, bht = b.y1 - b.y0 - 2 * r;
-      if (bwid < lo || bht < lo || bwid > hi || bht > hi) continue;           // dots/dashes are thinner, labels and pieces bigger
-      if (b.x0 === 0 || b.x1 === bw || bwid > 3 * bht || bht > 3 * bwid) continue; // must sit inside the band and be compact
-      const cx = x0 + (b.x0 + b.x1) / 2 - sx;
-      if (Math.abs(cx) < mm(0.5)) continue;                                   // straddles the seam: no twin to compare
-      marks.push({ id, cx, cy: (b.y0 + b.y1) / 2, bwid, bht, hit: false });
+      if (bwid < lo || bht < lo || bwid > hi || bht > hi) continue;           // dots/thin dashes, or labels and pieces
+      if (bwid > 2 * bht || bht > 2 * bwid) continue;                          // letter-shaped; dash pieces are longer
+      marks.push({ id, cx: x0 + (b.x0 + b.x1) / 2 - sx, cy: (b.y0 + b.y1) / 2, bwid, bht, edge: b.x0 === 0 || b.x1 === bw, hit: false });
     }
-    const like = (a, b) => Math.abs(a - b) <= Math.max(a, b) * 0.3 + 2;
-    for (const a of marks) for (const b of marks) {
-      if (a === b || Math.sign(a.cx) === Math.sign(b.cx)) continue;
-      if (Math.abs(a.cx + b.cx) <= tol && Math.abs(a.cy - b.cy) <= tol && like(a.bwid, b.bwid) && like(a.bht, b.bht)) a.hit = b.hit = true;
+    const like = (a, b) => Math.abs(a.bwid - b.bwid) <= Math.max(a.bwid, b.bwid) * 0.3 + 2 && Math.abs(a.bht - b.bht) <= Math.max(a.bht, b.bht) * 0.3 + 2;
+    const near = (x, y, a) => marks.some(c => c !== a && like(a, c) && Math.abs(c.cx - x) <= tol && Math.abs(c.cy - y) <= tol);
+    const cand = marks.filter(m => !m.edge && Math.abs(m.cx) >= mm(0.5) && Math.abs(m.cx) <= D && atCorner(m.cy));
+    for (const a of cand) for (const b of cand) {
+      if (a === b || Math.sign(a.cx) === Math.sign(b.cx) || Math.abs(a.cx + b.cx) > tol || Math.abs(a.cy - b.cy) > tol || !like(a, b)) continue;
+      const vx = b.cx - a.cx, vy = b.cy - a.cy;
+      if (near(b.cx + vx, b.cy + vy, b) || near(a.cx - vx, a.cy - vy, a)) continue; // periodic: dashes of a line
+      a.hit = b.hit = true;
     }
     const kill = new Set(marks.filter(m => m.hit).map(m => m.id)); removed += kill.size;
     if (kill.size) for (let y = 0; y < h; y++) for (let x = 0; x < bw; x++) if (kill.has(lab[y * bw + x])) data[y * w + x0 + x] = 255;
   }
   return removed;
 }
-export function removeAllMatchMarks(clean, cols, rows, W, H, dpi, pageNumbers) {
+export function removePageMarks(clean, cols, rows, W, H, dpi) {
   const { w, h } = clean; let data = clean.data;
-  let n = removeMatchMarks(data, w, h, [...Array(cols - 1)].map((_, i) => (i + 1) * W), dpi);
-  const t = transpose(data, w, h); n += removeMatchMarks(t, h, w, [...Array(rows - 1)].map((_, i) => (i + 1) * H), dpi);
+  const vs = [...Array(cols - 1)].map((_, i) => (i + 1) * W), hs = [...Array(rows - 1)].map((_, i) => (i + 1) * H);
+  let n = removeMatchMarks(data, w, h, vs, hs, dpi);
+  const t = transpose(data, w, h); n += removeMatchMarks(t, h, w, hs, vs, dpi);
   data = transpose(t, h, w);
-  if (pageNumbers) n += removeTileFurniture(data, w, h, cols, rows, W, H, dpi);
+  n += removeTileFurniture(data, w, h, cols, rows, W, H, dpi);
   return { clean: { data, w, h }, removed: n };
 }
 
-// Opt-in: page numbers sit at the same spot on every page, so remove small marks found at the same tile-relative
-// position and height on at least half the pages. This can also catch genuine pattern marks that happen to repeat
-// at the page pitch (quilting guides, button or drill marks), which is why it is off unless the user asks for it.
+// Page numbers sit at the same spot on every page, so remove small marks found at the same tile-relative position
+// and height on at least half the pages. This can also catch genuine pattern marks that happen to repeat at the page
+// pitch (quilting guides, button or drill marks); part of the opt-in removePageMarks pass for that reason.
 function removeTileFurniture(data, w, h, cols, rows, W, H, dpi) {
   const mm = v => Math.round(v / 25.4 * dpi), tol = mm(2.5), lo = mm(0.8), hi = mm(15), r = mm(0.5), tiles = [];
   for (let tr = 0; tr < rows; tr++) for (let tc = 0; tc < cols; tc++) {
@@ -242,7 +262,27 @@ function segment(clean, dpi) {
   const blocks = new Map();
   for (let i = 0; i < om.length; i++) if (om[i]) { const c = cl.lab[i]; if (!blocks.has(c)) blocks.set(c, new Uint8Array(sw * sh)); blocks.get(c)[i] = 1; }
   for (const m of blocks.values()) { let c = 0; for (const v of m) c += v; if (c > 150) parts.push({ kind: "info", mask: m }); }
-  return { parts, f, sw, sh };
+  return { parts: mergeNearby(parts, sw, sh, Math.round(5 / 25.4 * s)), f, sw, sh };
+}
+
+// Multi-size patterns draw the larger sizes as separate dashed/dotted lines a few millimetres outside the smallest
+// outline, so one garment piece arrives as several bands of lines. Parts within `r` cells (5 mm) of each other belong
+// together: merge them so the piece keeps all its size lines and the packer can't pull the bands apart.
+function mergeNearby(parts, sw, sh, r) {
+  const halo = parts.map(p => dilate(p.mask, sw, sh, r)), root = parts.map((_, i) => i);
+  const find = i => root[i] === i ? i : (root[i] = find(root[i]));
+  for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) {
+    if (find(i) === find(j)) continue;
+    const a = halo[i], b = parts[j].mask; for (let k = 0; k < a.length; k++) if (a[k] && b[k]) { root[find(j)] = find(i); break; }
+  }
+  const groups = new Map();
+  parts.forEach((p, i) => {
+    const g = groups.get(find(i));
+    if (!g) { groups.set(find(i), { kind: p.kind, mask: p.mask.slice() }); return; }
+    for (let k = 0; k < p.mask.length; k++) g.mask[k] |= p.mask[k];
+    if (p.kind === "piece") g.kind = "piece";
+  });
+  return [...groups.values()];
 }
 
 function extract(clean, mask, f, sw, sh) {
@@ -264,7 +304,7 @@ export function paperPx(spec, dpi) {
 
 export async function tile(buf, opts = {}) {
   const { paper = "A0", dpi = 300, previewScale = 10, margin = 10, gap = 10, keepSeams = false, rotate = true, boldLines: bold = true,
-    removePageNumbers = false, log = () => {} } = opts;
+    removePageMarks: pageMarks = false, log = () => {} } = opts;
   const mm = v => Math.round(v / 25.4 * dpi);
   const { tiles, W, H, lw, skipped } = await loadTiles(buf, dpi, opts.pages, log);
   const n = tiles.length;
@@ -282,10 +322,10 @@ export async function tile(buf, opts = {}) {
   log(`grid ${cv.rows}x${cols}, assembled ${(cv.w / dpi * 25.4).toFixed(0)}x${(cv.h / dpi * 25.4).toFixed(0)}mm`);
   log(keepSeams ? "Cleaning page numbers" : "Removing tile seams");
   let clean;
-  if (keepSeams) { clean = { data: cv.data, w: cv.w, h: cv.h }; for (let i = 0; i < clean.data.length; i++) if (clean.data[i] > PAPER) clean.data[i] = 255; }
+  if (keepSeams) { clean = { data: cv.data, w: cv.w, h: cv.h }; whitenPaper(clean.data, clean.w, clean.h); }
   else clean = removeSeams(cv, cols, W, H, lw);
   let marks = 0;
-  if (!keepSeams) { log("Removing page-matching marks"); ({ clean, removed: marks } = removeAllMatchMarks(clean, cols, cv.rows, W, H, dpi, removePageNumbers)); }
+  if (!keepSeams && pageMarks) { log("Removing page letters and numbers"); ({ clean, removed: marks } = removePageMarks(clean, cols, cv.rows, W, H, dpi)); }
   log("Finding pattern pieces");
   const { parts, f, sw, sh } = segment(clean, dpi);
   const imgs = parts.map(p => ({ kind: p.kind, ...extract(clean, p.mask, f, sw, sh) }));

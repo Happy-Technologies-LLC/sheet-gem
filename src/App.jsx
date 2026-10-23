@@ -21,7 +21,7 @@ export default function App() {
   const [rotate, setRotate] = useState(true);
   const [keepSeams, setKeepSeams] = useState(false);
   const [boldLines, setBoldLines] = useState(true);
-  const [pageNumbers, setPageNumbers] = useState(false);
+  const [pageMarks, setPageMarks] = useState(false);
   const [state, setState] = useState("idle"); // idle | running | done | error
   const [step, setStep] = useState("");
   const [result, setResult] = useState(null);
@@ -42,7 +42,7 @@ export default function App() {
   async function run() {
     setState("running"); setStep("Starting"); setResult(null); setSaved(null); setError("");
     try {
-      const r = await api.run(file.path, { paper: paperSpec, margin: +margin, gap: +gap, rotate, keepSeams, boldLines, removePageNumbers: pageNumbers });
+      const r = await api.run(file.path, { paper: paperSpec, margin: +margin, gap: +gap, rotate, keepSeams, boldLines, removePageMarks: pageMarks });
       setResult(r); setState("done");
     } catch (e) {
       const msg = String(e.message || e).replace(/^Error invoking remote method 'run': (Error: )?/, "");
@@ -125,7 +125,7 @@ export default function App() {
           <Toggle label="Turn pieces to save paper" checked={rotate} onChange={setRotate} />
           <Toggle label="Keep the page grid lines" checked={keepSeams} onChange={setKeepSeams} />
           <Toggle label="Darken thin lines for printing" checked={boldLines} onChange={setBoldLines} />
-          <Toggle label="Remove repeated page numbers (check the result)" checked={pageNumbers} onChange={setPageNumbers} />
+          <Toggle label="Remove page letters and numbers (check the result)" checked={pageMarks} onChange={setPageMarks} />
         </section>
 
         <footer className="actions">

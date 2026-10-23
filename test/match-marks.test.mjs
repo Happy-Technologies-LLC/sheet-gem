@@ -1,8 +1,8 @@
-// Page-matching mark removal must clear seam letters without erasing pattern content that merely looks similar.
+// Clean-up must clear page furniture without erasing pattern content that merely looks similar.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCanvas } from "@napi-rs/canvas";
-import { removeAllMatchMarks } from "../tiler/tiler.js";
+import { removePageMarks, whitenPaper } from "../tiler/tiler.js";
 
 const DPI = 300, mm = v => Math.round(v / 25.4 * DPI);
 const W = mm(100), H = mm(100), COLS = 2, ROWS = 2; // four 100 mm tiles, one interior corner at (W, H)
@@ -16,10 +16,14 @@ function canvas(draw) {
   for (let i = 0; i < data.length; i++) data[i] = Math.min(rgba[4 * i], rgba[4 * i + 1], rgba[4 * i + 2]);
   return { data, w: c.width, h: c.height };
 }
-const inkIn = ({ data, w }, x0, y0, x1, y1) => {
-  let n = 0; for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (data[y * w + x] < 200) n++; return n;
+const inkIn = ({ data, w }, x0, y0, x1, y1, below = 200) => {
+  let n = 0; for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (data[y * w + x] < below) n++; return n;
 };
-const run = (img, pageNumbers = false) => removeAllMatchMarks({ ...img, data: img.data.slice() }, COLS, ROWS, W, H, DPI, pageNumbers);
+const all = img => inkIn(img, 0, 0, img.w, img.h);
+const run = img => removePageMarks({ ...img, data: img.data.slice() }, COLS, ROWS, W, H, DPI);
+const dashed = (ctx, x0, y0, x1, y1) => {
+  ctx.lineWidth = mm(0.3); ctx.setLineDash([mm(3), mm(2)]); ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+};
 
 test("removes the four copies of a corner letter", () => {
   const img = canvas(ctx => {
@@ -31,33 +35,36 @@ test("removes the four copies of a corner letter", () => {
   assert.equal(inkIn(clean, W - mm(10), H - mm(10), W + mm(10), H + mm(10)), 0);
 });
 
-test("keeps a dashed line that crosses a seam, even with dashes mirrored about it", () => {
-  const img = canvas(ctx => {
-    ctx.lineWidth = mm(0.3); ctx.setLineDash([mm(3), mm(2)]); ctx.lineDashOffset = mm(1.5); // bold cut line, dash centred on the seam
-    ctx.beginPath(); ctx.moveTo(W - mm(40), mm(50)); ctx.lineTo(W + mm(40), mm(50)); ctx.stroke();
-  });
-  const before = inkIn(img, 0, 0, img.w, img.h), { clean, removed } = run(img);
+test("keeps a dashed line crossing a seam square-on next to a corner, dashes mirrored about it", () => {
+  const img = canvas(ctx => { ctx.lineDashOffset = mm(1.5); dashed(ctx, W - mm(40), H - mm(8), W + mm(40), H - mm(8)); });
+  const before = all(img), { clean, removed } = run(img);
   assert.ok(before > 0);
   assert.equal(removed, 0);
-  assert.equal(inkIn(clean, 0, 0, clean.w, clean.h), before);
+  assert.equal(all(clean), before);
 });
 
-test("keeps drill circles repeated at the same spot on every page unless page-number removal is asked for", () => {
-  const img = canvas(ctx => {
-    ctx.lineWidth = mm(0.25);
-    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) { ctx.beginPath(); ctx.arc(c * W + mm(50), r * H + mm(60), mm(1.5), 0, 2 * Math.PI); ctx.stroke(); }
-  });
-  const before = inkIn(img, 0, 0, img.w, img.h);
-  const kept = run(img);
-  assert.equal(kept.removed, 0);
-  assert.equal(inkIn(kept.clean, 0, 0, kept.clean.w, kept.clean.h), before);
-  assert.equal(run(img, true).removed, 4); // the opt-in pass cannot tell them from page numbers: that's why it is opt-in
+test("keeps a dashed line crossing a seam at an angle next to a corner", () => { // the vest's shoulder lines: compact diagonal dashes
+  const img = canvas(ctx => dashed(ctx, W - mm(40), H - mm(28), W + mm(40), H + mm(12)));
+  const before = all(img), { clean } = run(img);
+  assert.equal(all(clean), before);
 });
 
 test("page-number removal leaves marks that are cut by a page edge", () => {
   const img = canvas(ctx => { // a small notch shape straddling every vertical page edge at the same height
     for (let r = 0; r < ROWS; r++) for (let c = 0; c <= COLS; c++) ctx.fillRect(c * W - mm(1.5), r * H + mm(30), mm(3), mm(3));
   });
-  const before = inkIn(img, 0, 0, img.w, img.h), { clean } = run(img, true);
-  assert.equal(inkIn(clean, 0, 0, clean.w, clean.h), before);
+  const before = all(img), { clean } = run(img);
+  assert.equal(all(clean), before);
+});
+
+test("paper clean-up drops pale watermarks but keeps the faint edges of hairlines", () => {
+  const img = canvas(ctx => {
+    ctx.fillStyle = "#e2e2e4"; ctx.font = `${mm(60)}px sans-serif`; ctx.fillText("10", mm(20), mm(90)); // watermark page number
+    ctx.strokeStyle = "#000"; ctx.lineWidth = mm(0.09); ctx.beginPath(); ctx.moveTo(mm(5), mm(150)); ctx.lineTo(mm(195), mm(160)); ctx.stroke();
+  });
+  const line = inkIn(img, 0, mm(140), img.w, mm(170), 246), clean = { ...img, data: img.data.slice() };
+  assert.ok(inkIn(img, 0, 0, img.w, mm(100), 246) > 1000);
+  whitenPaper(clean.data, clean.w, clean.h);
+  assert.equal(inkIn(clean, 0, 0, clean.w, mm(100), 246), 0);
+  assert.ok(inkIn(clean, 0, mm(140), clean.w, mm(170), 246) >= line * 0.95);
 });
